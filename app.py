@@ -1,10 +1,6 @@
 """Streamlit dashboard for the thermal-aware scheduler project.
 
 Run with: streamlit run app.py
-
-The dashboard can use scheduler.run_simulation(processes, algorithm) when the
-Member 1 engine is present. Until then, a small in-file demonstration adapter
-keeps the UI usable for integration and presentation work.
 """
 
 from __future__ import annotations
@@ -15,63 +11,11 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from scheduler import run_simulation
 
 
 CORE_COUNT = 4
 ALGORITHMS = ("FCFS", "Thermal-aware")
-
-
-def _demo_simulate(processes: list[dict[str, Any]], algorithm: str) -> dict[str, Any]:
-    """Temporary UI adapter used only when the scheduling module is absent."""
-    ordered = sorted(processes, key=lambda p: (p["arrival_time"], str(p["process_id"])))
-    available = [0.0] * CORE_COUNT
-    temps = [35.0] * CORE_COUNT
-    workloads = [0.0] * CORE_COUNT
-    rows: list[dict[str, Any]] = []
-    history: list[dict[str, Any]] = []
-    for p in ordered:
-        arrival, burst = float(p["arrival_time"]), float(p["burst_time"])
-        ready = [max(available[c], arrival) for c in range(CORE_COUNT)]
-        if algorithm == "Thermal-aware":
-            tmax = max(temps)
-            lmax = max(workloads) or 1.0
-            scores = [0.6 * (temps[c] / max(tmax, 1.0)) + 0.4 * (workloads[c] / lmax) for c in range(CORE_COUNT)]
-            core = min(range(CORE_COUNT), key=lambda c: (ready[c], scores[c]))
-        else:
-            core = min(range(CORE_COUNT), key=lambda c: (ready[c], c))
-        start = ready[core]
-        finish = start + burst
-        wait = start - arrival
-        available[core] = finish
-        workloads[core] += burst
-        temps[core] = min(100.0, temps[core] + burst * 1.8)
-        rows.append({"process_id": p["process_id"], "arrival_time": arrival, "burst_time": burst,
-                     "core": f"Core {core + 1}", "start_time": start, "finish_time": finish,
-                     "waiting_time": wait, "turnaround_time": finish - arrival})
-        history.append({"time": start, "core": f"Core {core + 1}", "temperature": temps[core]})
-    end = max(available, default=0.0)
-    total_work = sum(float(p["burst_time"]) for p in processes)
-    utilization = (total_work / (CORE_COUNT * end) * 100) if end else 0.0
-    return {"records": rows, "temperature_history": history,
-            "peak_temperature": max((h["temperature"] for h in history), default=35.0),
-            "average_waiting_time": sum(r["waiting_time"] for r in rows) / len(rows) if rows else 0.0,
-            "average_turnaround_time": sum(r["turnaround_time"] for r in rows) / len(rows) if rows else 0.0,
-            "cpu_utilization": utilization}
-
-
-def run_engine(processes: list[dict[str, Any]], algorithm: str) -> dict[str, Any]:
-    """Use the project engine if it is available, otherwise use the UI adapter."""
-    try:
-        import scheduler  # type: ignore[import-not-found]
-
-        runner = getattr(scheduler, "run_simulation", None)
-        if runner is not None:
-            result = runner(processes, algorithm)
-            if isinstance(result, dict):
-                return result
-    except (ImportError, AttributeError, TypeError):
-        pass
-    return _demo_simulate(processes, algorithm)
 
 
 def _records(result: dict[str, Any]) -> pd.DataFrame:
@@ -128,7 +72,7 @@ def main() -> None:
             return
         processes = frame.to_dict("records")
         algorithms = list(ALGORITHMS) if compare else [algorithm]
-        results = {name: run_engine(processes, name) for name in algorithms}
+        results = {name: run_simulation(processes, name) for name in algorithms}
         st.session_state["simulation_results"] = results
 
     results = st.session_state.get("simulation_results")
@@ -212,7 +156,7 @@ def main() -> None:
         chart.update_layout(barmode="group", title="Performance metrics by algorithm", yaxis_title="Metric value")
         st.plotly_chart(chart, use_container_width=True)
 
-    st.caption("The dashboard expects scheduler.run_simulation(processes, algorithm) to return records, temperature_history, and summary metrics. A demonstration adapter is active if that engine is not yet available.")
+    st.caption("Thermal-aware selection uses normalized core temperature and accumulated workload with weights 0.6 and 0.4.")
 
 
 if __name__ == "__main__":
